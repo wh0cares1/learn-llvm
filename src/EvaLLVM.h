@@ -123,14 +123,17 @@ class EvaLLVM {
        * Numbers.
        */
       case ExpType::NUMBER:
-        // Implement here...
+          return builder->getInt32(exp.number);
 
       /**
        * ----------------------------------------------
        * Strings.
        */
       case ExpType::STRING: {
-        // Implement here...
+          // Unescape special chars, TODO: support all chars or handle in parser
+          auto re = std::regex("\\\\n");
+          auto str = std::regex_replace(exp.string, re, "\n");
+          return builder->CreateGlobalStringPtr(str);
       }
 
       /**
@@ -142,11 +145,17 @@ class EvaLLVM {
          * Boolean.
          */
         if (exp.string == "true" || exp.string == "false") {
-          // Implement here...
+            return builder->getInt1(exp.string == "true" ? true : false);
         } else {
           // Variables and functions:
-
-          // Implement here...
+            auto varName = exp.string;
+            auto value = env->lookup(varName);
+          // 1. Local vars: (TODO)
+          // 2. Global vars:
+            if (auto globalVar = llvm::dyn_cast<llvm::GlobalVariable>(value)) {
+                return builder->CreateLoad(globalVar->getInitializer()->getType(),
+                    globalVar, varName.c_str());
+            }
         }
 
       /**
@@ -255,7 +264,11 @@ class EvaLLVM {
           // Note: locals are allocated on the stack.
 
           if (op == "var") {
-            // Implement here...
+              // TODO: handle generic vaslues
+              auto varName = exp.list[1].string;
+              // Initializer
+              auto init = gen(exp.list[2], env);
+              return createGlobalVar(varName, (llvm::Constant*) init)->getInitializer();
           }
 
           // --------------------------------------------
@@ -293,7 +306,12 @@ class EvaLLVM {
           //
 
           else if (op == "printf") {
-            // Implement here...
+              auto printfFn = module->getFunction("printf");
+              std::vector<llvm::Value*> args{};
+              for (auto i = 1; i < exp.list.size(); i++) {
+                  args.push_back(gen(exp.list[i], env));
+              }
+              return builder->CreateCall(printfFn, args);
           }
 
           // --------------------------------------------
@@ -589,14 +607,26 @@ class EvaLLVM {
    */
   llvm::GlobalVariable* createGlobalVar(const std::string& name,
                                         llvm::Constant* init) {
-    // Implement here...
+      module->getOrInsertGlobal(name, init->getType());
+      auto variable = module->getNamedGlobal(name);
+      variable->setAlignment(llvm::MaybeAlign(4));
+      variable->setConstant(false);
+      variable->setInitializer(init);
+      return variable;
   }
 
   /**
    * Define external functions (from libc++)
    */
   void setupExternFunctions() {
-    // Implement here...
+    // i8* to substitute for char*, void*, etc
+    auto bytePtrTy = builder->getInt8Ty()->getPointerTo();
+    // int printf (const char* format, ...);
+    module->getOrInsertFunction("printf", 
+      llvm::FunctionType::get(
+        /* return type */ builder->getInt32Ty(),
+        /* format arg*/ bytePtrTy,
+        /* vararg */ true));
   }
 
   /**
@@ -604,7 +634,14 @@ class EvaLLVM {
    */
   llvm::Function* createFunction(const std::string& fnName,
                                  llvm::FunctionType* fnType, Env env) {
-    // Implement here...
+      // Function prototype might already be defined:
+      auto fn = module->getfunction(fnName);
+      // If not, allocate the function:
+      if (fn == nullptr) {
+          fn = createFunctionProto(fnName, fnType, env);
+      }
+      createFunctionBlock(fn);
+      return fn;
   }
 
   /**
@@ -626,7 +663,8 @@ class EvaLLVM {
    * Creates function block.
    */
   void createFunctionBlock(llvm::Function* fn) {
-    // Implement here...
+      auto entry = createBB("entry", fn);
+      builder->SetInsertPoint(entry);
   }
 
   /**
@@ -667,7 +705,16 @@ class EvaLLVM {
    * Sets up The Global Environment.
    */
   void setupGlobalEnvironment() {
-    // Implement here...
+      std::map<std::string, llvm::Value*> globalObject{
+          {"VERSION", builder->getInt32(42)}
+      };
+      std::map<std::string, llvm::Value*> globalRec{};
+
+      for (auto& entry : globalObject) {
+          globalRec[entry, first] = createGlobalVar(entry.first, (llvm::Constant*)entry.second);
+      }
+
+      GlobalEnv = std::make_shared<Environment>(globalRec, nullptr);
   }
 
   /**

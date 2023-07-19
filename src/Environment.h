@@ -37,7 +37,8 @@ class Environment : public std::enable_shared_from_this<Environment> {
    * Creates a variable with the given name and value.
    */
   llvm::Value* define(const std::string& name, llvm::Value* value) {
-    // Implement here...
+      record_[name] = value;
+      return value;
   }
 
   /**
@@ -54,7 +55,13 @@ class Environment : public std::enable_shared_from_this<Environment> {
    * throws if a variable is not defined.
    */
   std::shared_ptr<Environment> resolve(const std::string& name) {
-    // Implement here...
+    if (record_.count(name) != 0) {
+        return shared_from_this();
+    }
+    if (parent_ == nullptr) {
+        DIE << "variable \"" << name << "\" is not defined.";
+    }
+    return parent_->resolve(name);
   }
 
   /**
