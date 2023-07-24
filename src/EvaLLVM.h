@@ -151,10 +151,17 @@ class EvaLLVM {
             auto varName = exp.string;
             auto value = env->lookup(varName);
           // 1. Local vars: (TODO)
+            if (auto localVar = llvm::dyn_cast<llvm::AllocaInst>(value)) {
+                return builder->CreateLoad(localVar->getAllocatedType(), localVar, varName.c_str());
+            }
           // 2. Global vars:
-            if (auto globalVar = llvm::dyn_cast<llvm::GlobalVariable>(value)) {
+            else if (auto globalVar = llvm::dyn_cast<llvm::GlobalVariable>(value)) {
                 return builder->CreateLoad(globalVar->getInitializer()->getType(),
                     globalVar, varName.c_str());
+            }
+            // 3. Functions
+            else {
+                return value;
             }
         }
 
@@ -176,19 +183,19 @@ class EvaLLVM {
           // Binary math operations:
 
           if (op == "+") {
-            // Implement here...
+              GEN_BINARY_OP(CreateAdd, "tmpadd");
           }
 
           else if (op == "-") {
-            // Implement here...
+              GEN_BINARY_OP(CreateSub, "tmpsub");
           }
 
           else if (op == "*") {
-            // Implement here...
+              GEN_BINARY_OP(CreateMul, "tmpmul");
           }
 
           else if (op == "/") {
-            // Implement here...
+              GEN_BINARY_OP(CreateDiv, "tmpdiv");
           }
 
           // --------------------------------------------
@@ -196,32 +203,32 @@ class EvaLLVM {
 
           // UGT - unsigned, greater than
           else if (op == ">") {
-            // Implement here...
+              GEN_BINARY_OP(CreateICmpUGT, "tmpcmp");
           }
 
           // ULT - unsigned, less than
           else if (op == "<") {
-            // Implement here...
+              GEN_BINARY_OP(CreateICmpULT, "tmpcmp");
           }
 
           // EQ - equal
           else if (op == "==") {
-            // Implement here...
+              GEN_BINARY_OP(CreateICmpEQ, "tmpcmp");
           }
 
           // NE - not equal
           else if (op == "!=") {
-            // Implement here...
+              GEN_BINARY_OP(CreateICmpNE, "tmpcmp");
           }
 
           // UGE - greater or equal
           else if (op == ">=") {
-            // Implement here...
+              GEN_BINARY_OP(CreateICmpUGE, "tmpcmp");
           }
 
           // ULE - less or equal
           else if (op == "<=") {
-            // Implement here...
+              GEN_BINARY_OP(CreateICmpULE, "tmpcmp");
           }
 
           // --------------------------------------------
@@ -234,7 +241,45 @@ class EvaLLVM {
             // Compile <cond>:
             auto cond = gen(exp.list[1], env);
 
-            // Implement here...
+            // Then block - appended right away
+            auto thenBlock = createBB("then", fn);
+
+            // else, if-end blocks - appended later
+            // to handle nested if-expressions
+            auto elseBlock = createBB("else");
+            auto ifEndBlock = createBB("ifend");
+
+            // Condition branch
+            builder->CreateCondBr(cond, thenBlock, elseBlock);
+
+            // Then branch
+            builder->SetInsertPoint(thenBlock);
+            auto thenRes = gen(exp.list[2], env);
+            builder->CreateBr(ifEndBlock);
+
+            // Restore the block to handle nested if-expressions
+            // This is needed for phi instruction
+            thenBlock = builder->GetInsertBlock();
+
+            // Else branch
+            // Append the block to the function now
+            fn->getBasicBlocklist().push_back(elseBlock);
+            builder->SetInsertPoint(elseBlock);
+            auto elseRes = gen(exp.list[3], env);
+            builder->CreateBr(ifEndBlock);
+
+            // Restore the block for phi instruction
+            elseBlock = builder->GetInsertBlock();
+
+            // If-end block
+            fn->getBasicBlockList().push_back(ifEndBlock);
+            builder->SetInsertPoint(ifEndBlock);
+
+            // Result of the if expression is phi
+            auto phi = builder->CreatePHI(thenRes->getType(), 2, "tmpif");
+            phi->addIncoming(thenRes, thenBlock);
+            phi->addIncoming(elseRes, elseBlock);
+            return phi;
           }
 
           // --------------------------------------------
@@ -245,7 +290,31 @@ class EvaLLVM {
            *
            */
           else if (op == "while") {
-            // Implement here...
+            // Condition
+            auto condBlock = createBB("cond", fn);
+            builder->CreateBr(condBlock);
+
+            // Body, while-end blocks
+            auto bodyBlock = createBB("body");
+            auto loopEndBlock = createBB("loopend");
+
+            // Compile <cond>
+            builder->SetInsertPoint(condBlock);
+            auto cond = gen(exp.list[1], env);
+
+            // Condition branch
+            builder->CreateCondBr(cond, bodyBlock, loopEndBlock);
+
+            // Body
+            fn->getBasicBlockList().push_back(bodyBlock);
+            builder->SetInsertPoint(bodyBlock);
+            gen(exp.list[2], env);
+            builder->CreateBr(condBlock);
+
+            fn->getBasicBlockList().push_back(loopEndBlock);
+            builder->SetInsertPoint(loopEndBlock);
+
+            return builder->getInt32(0);
           }
 
           // --------------------------------------------
@@ -264,11 +333,16 @@ class EvaLLVM {
           // Note: locals are allocated on the stack.
 
           if (op == "var") {
-              // TODO: handle generic vaslues
-              auto varName = exp.list[1].string;
+              auto varNameDecl = exp.list[1];
+              auto varName = extractVarName(varNameDecl);
               // Initializer
               auto init = gen(exp.list[2], env);
-              return createGlobalVar(varName, (llvm::Constant*) init)->getInitializer();
+              // Type
+              auto varTy = extractVarType(varNameDecl);
+              // Variable
+              auto varBinding = allocVar(varName, varTy, env);
+              // Set value
+              return builder->CreateStore(init, varBinding);
           }
 
           // --------------------------------------------
@@ -276,7 +350,15 @@ class EvaLLVM {
           // Property update (set (prop self x) 100)
 
           else if (op == "set") {
-            // Implement here...
+              // Value
+              auto value = gen(exp.list[2], env);
+
+              auto varName = exp.list[1].string;
+              // Variable
+              auto varBinding = env->lookup(varName);
+              // Set value
+              builder->CreateStore(value, varBinding);
+              return value;
           }
 
           // --------------------------------------------
@@ -364,7 +446,13 @@ class EvaLLVM {
           else {
             auto callable = gen(exp.list[0], env);
 
-            // Implement here...
+            std::vector<llvm::Value*> args{};
+
+            for (auto i = 1; i < exp.list.size(); i++) {
+                args.push_back(gen(exp.list[i], env));
+            }
+            auto fn = (llvm::Function*)callable;
+            return builder->CreateCall(printfFn, args);
           }
         }
 
@@ -585,7 +673,37 @@ class EvaLLVM {
    * Typed: (def square ((x number)) -> number (* x x))
    */
   llvm::Value* compileFunction(const Exp& fnExp, std::string fnName, Env env) {
-    // Implement here...
+      auto params = fnExp.list[2];
+      auto body = hasReturnType(fnExp) ? fnExp.list[5] : fnExp.list[3];
+      
+      // Save current fn
+      auto prevFn = fn;
+      auto prevBlock = builder->getInsertBlock();
+
+      // Override fn to compile body
+      auto newFn = createFunction(fnName, extractFunctionType(fnExp), env);
+      fn = newFn;
+
+      // Set parameter names
+      auto idx = 0;
+
+      // Function environment for params
+      auto fnEnv = std::make_shared<Environment>(
+          std::map<std::string, llvm::Value*>{}, env);
+      for (auto& arg : fn->args()) {
+          auto param = params.list[idx++];
+          auto argName = extractVarName(param);
+          arg.setName(argName);
+          // Allocate a local variable per argument to make arguments mutable
+          auto argBinding = allocVar(argName, arg.getType(), fnEnv);
+          builder->CreateStore(&arg, argBinding);
+      }
+      builder->CreateRet(gen(body, fnEnv));
+      // Restore previous fn after compiling
+      builder->SetInsertPoint(prevBlock);
+      fn = prevFn;
+
+      return newFn;
   }
 
   /**
