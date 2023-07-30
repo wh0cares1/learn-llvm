@@ -1,23 +1,19 @@
 # Programming Language with LLVM
 
 This is a repository for the [Programming Language with LLVM](http://dmitrysoshnikov.com/courses/programming-language-with-llvm/) course.
+My goal is to understand about LLVM internals.
 
-As mentioned in the class description, we want our students to understand and implement every piece of detail from the VM themselves, instead of copy-pasting from the final solution.
-
-Therefore, the source code here provides only the overall structure of the project, leaving the missing parts as assignments. The _"Implement here..."_ comments with references to appropriate video lectures, show specific places which are needed to be completed in order to finalize the full working interpreter.
-
-Example:
-
-```cpp
-if (op == "var") {
-  // Implement here: see Lecture 14
-}
-```
-
-## Enroll
-
-You can enroll to the full course here:
-
-- On [dmitrysoshnikov.education](https://www.dmitrysoshnikov.education/p/programming-language-with-llvm) school
-
-More details, classes, articles and info is on [http://dmitrysoshnikov.com](http://dmitrysoshnikov.com).
+## What's next?
+1. Optimizing compiler:
+opt [...]
+2. Arrays/lists
+(list 1 2 3) —> llvm::ArrayType
+3. Custom Garbage Collector hooks —> https://l1vm.org/docs/GarbageCottection.html
+4. Interfaces
+(interface Callable ... (def __call__ (self) throw))
+(class Transformer Callable ...)
+5. Rest arguments
+(interface Callable ... (def __call__ (self ...) throw))
+6. Opaque pointers: i32* -> ptr, i8* -> ptr, etc
+7. LLVM IR & MLIR
+8. (async def fetch (...) ...) -> (await fetch ...)

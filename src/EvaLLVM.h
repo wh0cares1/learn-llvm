@@ -528,12 +528,32 @@ class EvaLLVM {
 
           else {
             auto callable = gen(exp.list[0], env);
-            auto fn = (llvm::Function*)callable;
+            // Either a raw function or a function (callabe class)
+            auto callableTy = callable->getType()->getContainedType(0);
+
             std::vector<llvm::Value*> args{};
             auto argIdx = 0;
 
+            // Callable classes
+            if (callableTy->isStructTy()) {
+                auto cls = (llvm::StructType*)callableTy;
+                std::string className{cls->getName().data()};
+                
+                // Push the functor itself as the first 'self' arg
+                args.push_back(callable);
+                argIdx++; // and skip this arg
+
+                // TODO : support inheritance (load method from vTable)
+                callable = module->getFunction(className + "___call__");
+                // Note: 3 leading underscore
+            }
+            auto fn = (llvm::Function*)callable;
+
             for (auto i = 1; i < exp.list.size(); i++) {
                 auto argValue = gen(exp.list[i], env);
+                // Need to cast to parameter type to support sub—classes:
+                // we should be abte to pass Point 3D instance for the type
+                // of the parent class Point:
                 auto paramTy = fn->getArg(argIdx)->getType();
                 auto bitCastArgVal = builder->CreateBitCast(argValue, paramTy);
                 args.push_back(bitCastArgVal);
